@@ -56,15 +56,9 @@ class TapologyScraper:
         return event_name, event_date
     
     def get_bouts(self):
-        """Pobiera walki (bouts) z danej gali.
-           Dla każdej walki zwraca słownik zawierający:
-             - left_fighter: imię i nazwisko zawodnika po lewej stronie
-             - left_record: bilans walk zawodnika po lewej stronie
-             - right_fighter: imię i nazwisko zawodnika po prawej stronie
-             - right_record: bilans walk zawodnika po prawej stronie
-        """
+
         bouts = []
-        # Poczekaj, aż lista walk pojawi się na stronie
+
         bout_list = WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "ul[data-event-view-toggle-target='list']"))
         )
@@ -73,14 +67,12 @@ class TapologyScraper:
         
         for bout in bout_items:
             try:
-                # Pobierz kontenery dla lewego i prawego zawodnika
                 left_container = bout.find_element(By.CSS_SELECTOR, "div[id*='_leftBio']")
                 right_container = bout.find_element(By.CSS_SELECTOR, "div[id*='_rightBio']")
                 
                 left_name = left_container.find_element(By.CSS_SELECTOR, "a.link-primary-red").text.strip()
                 right_name = right_container.find_element(By.CSS_SELECTOR, "a.link-primary-red").text.strip()
                 
-                # Szukamy bilansu w elementach <span>
                 left_spans = left_container.find_elements(By.TAG_NAME, "span")
                 left_record = None
                 for span in left_spans:
