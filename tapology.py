@@ -48,12 +48,17 @@ class TapologyScraper:
             event_date = WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "span.hidden.md\\:inline"))
             ).text
+            location = self.driver.find_element(By.CSS_SELECTOR, "div.hidden.md\\:inline a.link-primary-gray").text
+
         except:
             event_date = WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "span.inline.md\\:hidden"))
             ).text
+
+            location = self.driver.find_element(By.CSS_SELECTOR, "div.inline.md\\:hidden a.link-primary-gray").text
+
         
-        return event_name, event_date
+        return event_name, event_date, location
     
     def get_bouts(self):
 
@@ -63,7 +68,7 @@ class TapologyScraper:
             EC.presence_of_element_located((By.CSS_SELECTOR, "ul[data-event-view-toggle-target='list']"))
         )
         bout_items = bout_list.find_elements(By.TAG_NAME, "li")
-        record_pattern = re.compile(r'\d+-\d+')
+        record_pattern = re.compile(r'\d+-\d+(?:-\d+)?')
         
         for bout in bout_items:
             try:
@@ -106,10 +111,10 @@ class TapologyScraper:
         
         for link in event_links:
             print(f'Przetwarzanie linku: {link}')
-            event_name, event_date = self.get_event_details(link)
+            event_name, event_date, event_place = self.get_event_details(link)
             print(f"Nazwa wydarzenia: {event_name}")
             print(f"Data wydarzenia: {event_date}")
-
+            print(f"Miejsce wydarzenia: {event_place}")
             bouts = self.get_bouts()
             for bout in bouts:
                 print("Bout:")
