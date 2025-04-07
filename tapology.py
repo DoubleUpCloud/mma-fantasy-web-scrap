@@ -15,7 +15,13 @@ class TapologyScraper:
     
     def _setup_driver(self, driver_path):
         chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument("--start-maximized")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
         service = Service(driver_path)
         return webdriver.Chrome(service=service, options=chrome_options)
     
@@ -60,23 +66,37 @@ class TapologyScraper:
         
         return event_name, event_date, location
     
+    
     def get_bouts(self):
 
         bouts = []
-
-        bout_list = WebDriverWait(self.driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "ul[data-event-view-toggle-target='list']"))
-        )
-        bout_items = bout_list.find_elements(By.TAG_NAME, "li")
-        record_pattern = re.compile(r'\d+-\d+(?:-\d+)?')
+        bout_items = []
+        try:
+            bout_list = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "ul[data-event-view-toggle-target='list']"))
+            )
+            bout_items = bout_list.find_elements(By.TAG_NAME, "li")
+            record_pattern = re.compile(r'\d+-\d+(?:-\d+)?')
         
+        except:
+            print("Nie znaleziono walk")
+
         for bout in bout_items:
             try:
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", bout)
+                time.sleep(0.2)
                 left_container = bout.find_element(By.CSS_SELECTOR, "div[id*='_leftBio']")
                 right_container = bout.find_element(By.CSS_SELECTOR, "div[id*='_rightBio']")
                 
-                left_name = left_container.find_element(By.CSS_SELECTOR, "a.link-primary-red").text.strip()
-                right_name = right_container.find_element(By.CSS_SELECTOR, "a.link-primary-red").text.strip()
+                left_name_elem = WebDriverWait(bout, 3).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div[id*='_leftBio'] a.link-primary-red"))
+                )
+                left_name = left_name_elem.get_attribute('innerHTML')
+
+                right_name_elem = WebDriverWait(bout, 3).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div[id*='_rightBio'] a.link-primary-red"))
+                )
+                right_name = right_name_elem.get_attribute('innerHTML')
                 
                 left_spans = left_container.find_elements(By.TAG_NAME, "span")
                 left_record = None
@@ -102,6 +122,8 @@ class TapologyScraper:
                 })
             except Exception as e:
                 print(f"Error processing bout: {e}")
+                print("HTML:")
+                print(bout.text)
         return bouts
 
     def scrape_events(self):
@@ -115,6 +137,7 @@ class TapologyScraper:
             print(f"Nazwa wydarzenia: {event_name}")
             print(f"Data wydarzenia: {event_date}")
             print(f"Miejsce wydarzenia: {event_place}")
+            
             bouts = self.get_bouts()
             for bout in bouts:
                 print("Bout:")
