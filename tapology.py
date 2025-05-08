@@ -7,12 +7,14 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 import time
 import re
+import requests
+import json
 
 class TapologyScraper:
     def __init__(self, driver_path, website_url):
         self.website_url = website_url
         self.driver = self._setup_driver(driver_path)
-    
+
     def _setup_driver(self, driver_path):
         chrome_options = Options()
         chrome_options.add_argument("--headless")
@@ -24,10 +26,10 @@ class TapologyScraper:
 
         service = Service(driver_path)
         return webdriver.Chrome(service=service, options=chrome_options)
-    
+
     def open_website(self):
         self.driver.get(self.website_url)
-    
+
     def select_major_org(self):
         select_element = WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.ID, "group"))
@@ -36,20 +38,20 @@ class TapologyScraper:
         select.select_by_value("major")
         print("Wybrano: Major Org")
         time.sleep(2)
-    
+
     def get_event_links(self):
         events_container = WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.CLASS_NAME, "fightcenterEvents"))
         )
         links = events_container.find_elements(By.TAG_NAME, 'a')
         return set(link.get_attribute("href") for link in links if link.get_attribute("href") and "/fightcenter/events/" in link.get_attribute("href"))
-    
+
     def get_event_details(self, url):
         self.driver.get(url)
         event_name = WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.TAG_NAME, 'h2'))
         ).text
-        
+
         try:
             event_date = WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "span.hidden.md\\:inline"))
@@ -63,10 +65,10 @@ class TapologyScraper:
 
             location = self.driver.find_element(By.CSS_SELECTOR, "div.inline.md\\:hidden a.link-primary-gray").text
 
-        
+
         return event_name, event_date, location
-    
-    
+
+
     def get_bouts(self):
 
         bouts = []
@@ -77,7 +79,7 @@ class TapologyScraper:
             )
             bout_items = bout_list.find_elements(By.TAG_NAME, "li")
             record_pattern = re.compile(r'\d+-\d+(?:-\d+)?')
-        
+
         except:
             print("Nie znaleziono walk")
 
@@ -87,7 +89,7 @@ class TapologyScraper:
                 time.sleep(0.2)
                 left_container = bout.find_element(By.CSS_SELECTOR, "div[id*='_leftBio']")
                 right_container = bout.find_element(By.CSS_SELECTOR, "div[id*='_rightBio']")
-                
+
                 left_name_elem = WebDriverWait(bout, 3).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div[id*='_leftBio'] a.link-primary-red"))
                 )
@@ -97,7 +99,7 @@ class TapologyScraper:
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div[id*='_rightBio'] a.link-primary-red"))
                 )
                 right_name = right_name_elem.get_attribute('innerHTML')
-                
+
                 left_spans = left_container.find_elements(By.TAG_NAME, "span")
                 left_record = None
                 for span in left_spans:
@@ -113,7 +115,7 @@ class TapologyScraper:
                     if record_pattern.fullmatch(text):
                         right_record = text
                         break
-                
+
                 bouts.append({
                     "left_fighter": left_name,
                     "left_record": left_record,
@@ -130,43 +132,57 @@ class TapologyScraper:
         self.open_website()
         self.select_major_org()
         event_links = self.get_event_links()
-        
+
         for link in event_links:
             print(f'Przetwarzanie linku: {link}')
             event_name, event_date, event_place = self.get_event_details(link)
             print(f"Nazwa wydarzenia: {event_name}")
             print(f"Data wydarzenia: {event_date}")
             print(f"Miejsce wydarzenia: {event_place}")
-            
+
             bouts = self.get_bouts()
             for bout in bouts:
                 print("Bout:")
                 print(f"  Lewy zawodnik: {bout['left_fighter']} ({bout['left_record']})")
                 print(f"  Prawy zawodnik: {bout['right_fighter']} ({bout['right_record']})")
                 print('-' * 50)
-    
+
+            # Send the scraped event data to the backend
+            self.send_event_data(event_name, event_date, event_place, bouts)
+
+    def send_event_data(self, event_name, event_date, event_place, bouts):
+
+        event_data = {
+            "name": event_name,
+            "date": event_date,
+            "location": event_place,
+            "bouts": bouts
+        }
+        print(event_data)
+        try:
+            response = requests.post(
+                "http://localhost:8080/api/events",
+                json=event_data,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if response.status_code == 200 or response.status_code == 201:
+                print(f"Successfully sent data to backend for event: {event_name}")
+            else:
+                print(f"Failed to send data to backend. Status code: {response.status_code}")
+                print(f"Response: {response.text}")
+        except Exception as e:
+            print(f"Error sending data to backend: {e}")
+
     def close(self):
         self.driver.quit()
 
 if __name__ == "__main__":
     driver_path = r"D:\\ChromeDriver\\chromedriver-win64\\chromedriver.exe"
     website_url = 'https://www.tapology.com/fightcenter'
-    
+
     scraper = TapologyScraper(driver_path, website_url)
     try:
         scraper.scrape_events()
     finally:
         scraper.close()
-
-
-    # while True:
-    #     try:
-    #         load_more_button = WebDriverWait(driver, 5).until(
-    #             EC.element_to_be_clickable((By.ID, "loadMoreButton"))
-    #         )
-    #         load_more_button.click()
-    #         print("Kliknięto Load More")
-    #         time.sleep(2) 
-    #     except:
-    #         print("Brak więcej przycisków")
-    #         break

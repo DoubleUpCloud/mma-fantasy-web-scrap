@@ -176,3 +176,4 @@ cython_debug/
 sel.py
 bs4.py
 Web+Scraping+Cheat+Sheet+2.0.pdf
+.idea/
