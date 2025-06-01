@@ -11,15 +11,14 @@ import requests
 import json
 from datetime import datetime, timedelta
 
-today = datetime.today().date()
-yesterday = today - timedelta(days=1)
 
 class TapologyResultsScraper:
     def __init__(self, driver_path, website_url):
         self.website_url = website_url
         self.driver = self._setup_driver(driver_path)
         self.today = datetime.now().date()
-        self.yesterday = self.today - timedelta(days=1)
+        # Ustawienie daty 'twenty_days_ago' na 20 dni wstecz od dziś
+        self.twenty_days_ago = self.today - timedelta(days=1)
 
     def _setup_driver(self, driver_path):
         chrome_options = Options()
@@ -28,7 +27,8 @@ class TapologyResultsScraper:
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        chrome_options.add_argument(
+            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         service = Service(driver_path)
         return webdriver.Chrome(service=service, options=chrome_options)
@@ -59,7 +59,8 @@ class TapologyResultsScraper:
             EC.presence_of_element_located((By.CLASS_NAME, "fightcenterEvents"))
         )
         links = events_container.find_elements(By.TAG_NAME, 'a')
-        return set(link.get_attribute("href") for link in links if link.get_attribute("href") and "/fightcenter/events/" in link.get_attribute("href"))
+        return set(link.get_attribute("href") for link in links if
+                   link.get_attribute("href") and "/fightcenter/events/" in link.get_attribute("href"))
 
     def get_event_details(self, url):
         self.driver.get(url)
@@ -67,117 +68,120 @@ class TapologyResultsScraper:
             EC.presence_of_element_located((By.TAG_NAME, 'h2'))
         ).text
 
+        event_date = None
+        location = None
+
         try:
-            event_date = WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "span.hidden.md\\:inline"))
-            ).text
-            location = self.driver.find_element(By.CSS_SELECTOR, "div.hidden.md\\:inline a.link-primary-gray").text
-
-        except:
-            event_date = WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "span.inline.md\\:hidden"))
-            ).text
-
-            location = self.driver.find_element(By.CSS_SELECTOR, "div.inline.md\\:hidden a.link-primary-gray").text
-
-        # Parse the event date to check if it's from today or yesterday
-        try:
-            # Example format: "Sat, 05.18.2024"
-            date_parts = event_date.split(", ")[1].split(".")
-            month = int(date_parts[0])
-            day = int(date_parts[1])
-            year = int(date_parts[2])
-            event_date_obj = datetime.date(year, month, day)
-
-            # Check if the event date is today or yesterday
-            if event_date_obj != self.today and event_date_obj != self.yesterday:
-                return None, None, None
+            event_date_span = WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "span.hidden.md\\:inline, span.inline.md\\:hidden"))
+            )
+            event_date = event_date_span.text
         except Exception as e:
-            print(f"Error parsing date: {e}")
-            # If we can't parse the date, we'll include the event anyway
-            pass
+            print(f"Nie znaleziono elementu daty wydarzenia: {e}")
+
+        try:
+            location_element = self.driver.find_element(By.CSS_SELECTOR,
+                                                        "div.hidden.md\\:inline a.link-primary-gray, div.inline.md\\:hidden a.link-primary-gray")
+            location = location_element.text
+        except Exception as e:
+            print(f"Nie znaleziono elementu lokalizacji: {e}")
+
+        if event_date:
+            try:
+                # Próba parsowania formatu "MAJ 24, 2025"
+                try:
+                    event_date_obj = datetime.strptime(event_date, "%B %d, %Y").date()
+                except ValueError:
+                    # Próba parsowania formatu "05.24.2025" lub podobnego
+                    date_parts = event_date.split(".")
+                    if len(date_parts) == 3:
+                        month = int(date_parts[0])
+                        day = int(date_parts[1])
+                        year = int(date_parts[2])
+                        event_date_obj = datetime.date(year, month, day)
+                    else:
+                        raise ValueError(f"Nieznany format daty: {event_date}")
+
+                # Zmieniony warunek: Sprawdź, czy data wydarzenia jest w zakresie ostatnich 20 dni (włącznie)
+                if not (self.twenty_days_ago <= event_date_obj <= self.today):
+                    print(f"Pominięcie wydarzenia poza zakresem dat: {event_name} ({event_date})")
+                    return None, None, None
+            except Exception as e:
+                print(
+                    f"Błąd podczas parsowania lub sprawdzania daty: {event_date}: {e}. Kontynuuję przetwarzanie wydarzenia.")
+                pass
 
         return event_name, event_date, location
 
-    def get_bout_results(self):
-        bouts = []
-        bout_items = []
-        try:
-            # Try to find the results container based on the HTML example in the issue description
-            # First try the exact CSS selector from the example
-            try:
-                bout_items = self.driver.find_elements(By.CSS_SELECTOR, "div.div.px-2.py-2\\.5.text-xs.leading-none.flex.justify-between")
-            except:
-                # If that fails, try a more general selector
-                bout_items = self.driver.find_elements(By.CSS_SELECTOR, "div.px-2.py-2\\.5.text-xs.leading-none.flex.justify-between")
+    def get_fighter_full_name(self, fighter_profile_url):
+        if not fighter_profile_url:
+            return "", "0-0-0"  # Zwracamy pusty string dla imienia i rekordu
 
-            if not bout_items:
-                # If still no results, try another approach
-                results_section = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "[data-event-view-toggle-target='list']"))
-                )
-                bout_items = results_section.find_elements(By.CSS_SELECTOR, "li")
+        current_url = self.driver.current_url
+        self.driver.get(fighter_profile_url)
+        full_name = ""
+        record = "0-0-0"
+        try:
+            # Selektor dla pełnego imienia i nazwiska (najnowsza strategia)
+            name_element = WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.XPATH,
+                                                "//div[@id='specOwnershipSidebarClaimSection']//div[@class='div inline-block text-[17px] leading-none font-bold text-tap_3 mb-2.5']"))
+            )
+            full_name = name_element.text.strip()
+            # print(f"Pobrano imię: {full_name}")
 
         except Exception as e:
-            print(f"Error finding bout results: {e}")
-            return bouts
+            print(f"Nie udało się pobrać imienia/rekordu zawodnika z {fighter_profile_url}: {e}")
+        finally:
+            self.driver.get(current_url)
+        return full_name, record
 
-        for bout in bout_items:
-            try:
-                # Scroll to the bout
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", bout)
-                time.sleep(0.2)
+    def get_bout_results(self):
+        bouts_info = []
+        try:
+            bout_items = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_all_elements_located((
+                    By.XPATH,
+                    "//div[contains(@class, 'eventQuickCardSidebar')]/div[contains(@class, 'px-2') and contains(@class, 'py-2.5') and contains(@class, 'flex') and contains(@class, 'justify-between')]"
+                ))
+            )
 
-                # Try to get the left and right spans
+            for bout in bout_items:
                 try:
                     left_span = bout.find_element(By.CSS_SELECTOR, "span.left")
                     right_span = bout.find_element(By.CSS_SELECTOR, "span.right")
-                except:
-                    # If the spans aren't found, this might not be a result item
-                    continue
 
-                left_text = left_span.text
-                result_details = right_span.text
+                    left_text = left_span.text
+                    result_details = right_span.text
 
-                # Parse the left text to extract winner and loser
-                if "def" in left_text:
-                    parts = left_text.split("def")
-                    winner_text = parts[0].strip()
-                    loser_text = parts[1].strip()
-
-                    # Clean up the winner and loser names (remove W/L indicators)
-                    winner = re.sub(r'^\s*W\s*', '', winner_text).strip()
-                    loser = re.sub(r'^\s*L\s*', '', loser_text).strip()
-
-                    # Get fighter links
-                    fighter_links = left_span.find_elements(By.TAG_NAME, "a")
                     winner_link = ""
                     loser_link = ""
+
+                    fighter_links = left_span.find_elements(By.TAG_NAME, "a")
                     if len(fighter_links) >= 2:
                         winner_link = fighter_links[0].get_attribute("href")
                         loser_link = fighter_links[1].get_attribute("href")
+                    elif len(fighter_links) == 1:
+                        if "def" in left_text.lower():
+                            winner_link = fighter_links[0].get_attribute("href")
+                        else:
+                            pass
 
-                    # Get result link
-                    result_link = ""
-                    result_links = right_span.find_elements(By.TAG_NAME, "a")
-                    if result_links:
-                        result_link = result_links[0].get_attribute("href")
-
-                    # Check for W/L indicators
-                    winner_indicator = "W" if "W" in winner_text else ""
-                    loser_indicator = "L" if "L" in loser_text else ""
-
-                    bouts.append({
-                        "winner": winner,
-                        "loser": loser,
-                        "result": result_details,
+                    bouts_info.append({
+                        "left_text": left_text,
+                        "result_details": result_details,
+                        "winner_link": winner_link,
+                        "loser_link": loser_link
                     })
-            except Exception as e:
-                print(f"Error processing bout result: {e}")
-                print("HTML:")
-                print(bout.text)
+                except Exception as e:
+                    print(f"Błąd podczas zbierania wstępnych danych walki (wewnątrz pętli): {e}")
+                    continue
 
-        return bouts
+        except Exception as e:
+            print(f"Błąd podczas znajdowania głównych elementów walk (bout_items): {e}")
+            return []
+
+        return bouts_info
 
     def scrape_results(self):
         self.open_website()
@@ -191,44 +195,85 @@ class TapologyResultsScraper:
             print(f'Przetwarzanie linku: {link}')
             event_name, event_date, event_place = self.get_event_details(link)
 
-            # Skip events that are not from today or yesterday
-            if event_date is None:
-                print(f"Skipping event: {link}")
+            if event_name is None:
                 continue
-
-            # print(event_date)
-            # try:
-            #     event_dt=datetime.strptime(event_date, "%B %d, %Y").date()
-            # except ValueError:
-            #     print(f"Skipping event: (nieprawidlowy format daty")
-            #     continue
-            #
-            # if event_dt not in (today,yesterday):
-            #     print(f"Skipping event (nie z dziś ani wczoraj): {link}")
-            #     continue
 
             print(f"Nazwa wydarzenia: {event_name}")
             print(f"Data wydarzenia: {event_date}")
             print(f"Miejsce wydarzenia: {event_place}")
 
-            bout_results = self.get_bout_results()
-            for bout in bout_results:
-                print("Bout Result:")
-                print(f"  Result: {bout['result']}")
-                print('-' * 50)
+            raw_bout_data = self.get_bout_results()
 
-            # Create event data
+            processed_bouts = []
+            for bout_data in raw_bout_data:
+                winner_link = bout_data['winner_link']
+                loser_link = bout_data['loser_link']
+                left_text = bout_data['left_text']
+                result_details = bout_data['result_details']
+
+                winner_full_name = ""
+                winner_record = ""
+                loser_full_name = ""
+                loser_record = ""
+
+                # Przejdź do profilu zwycięzcy i pobierz pełne imię i rekord
+                if winner_link:
+                    winner_full_name, winner_record = self.get_fighter_full_name(winner_link)
+                # Przejdź do profilu przegranego i pobierz pełne imię i rekord
+                if loser_link:
+                    loser_full_name, loser_record = self.get_fighter_full_name(loser_link)
+
+                winner = winner_full_name
+                loser = loser_full_name
+
+                # Fallback na parsowanie z tekstu, jeśli pełne imiona nie zostały znalezione
+                if not winner or not loser:
+                    match = re.search(r'(.*)\s+def\s+(.*)', left_text, re.IGNORECASE)
+                    if match:
+                        winner_text_raw = match.group(1).strip()
+                        loser_text_raw = match.group(2).strip()
+                        if not winner:
+                            winner = re.sub(r'^\s*[WL]\s*', '', winner_text_raw).strip()
+                        if not loser:
+                            loser = re.sub(r'^\s*[WL]\s*', '', loser_text_raw).strip()
+                    else:
+                        fighter_names_from_text = [n.strip() for n in re.split(r'\s+vs\.?\s+', left_text) if n.strip()]
+                        if len(fighter_names_from_text) >= 2:
+                            if not winner:
+                                winner = fighter_names_from_text[0]
+                            if not loser:
+                                loser = fighter_names_from_text[1]
+                        elif len(fighter_names_from_text) == 1:
+                            if not winner:
+                                winner = fighter_names_from_text[0]
+
+                processed_bouts.append({
+                    "winner": winner,
+                    "winner_record": winner_record,  # Dodano rekord zwycięzcy
+                    "loser": loser,
+                    "loser_record": loser_record,  # Dodano rekord przegranego
+                    "result": result_details,
+                })
+
+            # for bout in processed_bouts:
+            #     print("Wynik walki:")
+            #     print(f"  Zwycięzca: {bout['winner']} (Rekord: {bout['winner_record']})")
+            #     print(f"  Przegrany: {bout['loser']} (Rekord: {bout['loser_record']})")
+            #     print(f"  Rezultat: {bout['result']}")
+            #     print('-' * 50)
+
             event_data = {
                 "name": event_name,
                 "date": event_date,
                 "location": event_place,
-                "bout_results": bout_results
+                "bout_results": processed_bouts
             }
 
             results_data.append(event_data)
 
-            # Send the scraped event data to the backend
-            self.send_event_data(event_name, event_date, event_place, bout_results)
+            self.send_event_data(event_name, event_date, event_place, processed_bouts)
+
+            self.driver.get(link)
 
         return results_data
 
@@ -239,7 +284,9 @@ class TapologyResultsScraper:
             "location": event_place,
             "bout_results": bout_results
         }
+
         print(event_data)
+
         try:
             response = requests.post(
                 "http://localhost:8080/api/event-results",
@@ -248,15 +295,16 @@ class TapologyResultsScraper:
             )
 
             if response.status_code == 200 or response.status_code == 201:
-                print(f"Successfully sent results data to backend for event: {event_name}")
+                print(f"Pomyślnie wysłano dane do backendu dla wydarzenia: {event_name}")
             else:
-                print(f"Failed to send results data to backend. Status code: {response.status_code}")
-                print(f"Response: {response.text}")
+                print(f"Nie udało się wysłać danych do backendu. Status code: {response.status_code}")
+                print(f"Odpowiedź: {response.text}")
         except Exception as e:
-            print(f"Error sending results data to backend: {e}")
+            print(f"Błąd podczas wysyłania danych do backendu: {e}")
 
     def close(self):
         self.driver.quit()
+
 
 if __name__ == "__main__":
     driver_path = r"D:\\ChromeDriver\\chromedriver-win64\\chromedriver.exe"
